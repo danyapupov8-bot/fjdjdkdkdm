@@ -31,7 +31,7 @@ def main_menu():
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-# --- СТАРТ (ТЕКСТ КАК НА СКРИНЕ) ---
+# --- СТАРТ (С КАРТИНКОЙ) ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     welcome_text = (
@@ -46,7 +46,13 @@ async def cmd_start(message: Message):
         "👇 Выберите нужный раздел ниже:"
     )
     
-    await message.answer(welcome_text, parse_mode="HTML", reply_markup=main_menu())
+    # Отправляем картинку с текстом и кнопкой
+    await message.answer_photo(
+        photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
+        caption=welcome_text,
+        parse_mode="HTML",
+        reply_markup=main_menu()
+    )
 
 # --- 1. СОЗДАНИЕ СДЕЛКИ ---
 @dp.message(F.text == "🤝 Создать сделку")
