@@ -150,7 +150,7 @@ async def my_details(call: CallbackQuery):
 # --- 1. СОЗДАНИЕ СДЕЛКИ (ВСЕГДА С БАНКА) ---
 @dp.callback_query(F.data == "create_deal")
 async def create_deal(call: CallbackQuery, state: FSMContext):
-    await state.clear() # Очищаем старые данные
+    await state.clear()
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🟢 Сбербанк", callback_data="bank_Сбербанк"),
@@ -185,7 +185,6 @@ async def process_phone(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
     data = await state.get_data()
     
-    # Сохраняем в профиль (чтобы показывались в "Реквизиты")
     users_db[message.from_user.id]["bank"] = data.get("bank")
     users_db[message.from_user.id]["phone"] = data.get("phone")
     
@@ -225,6 +224,25 @@ async def process_nft(message: Message, state: FSMContext):
         f"Сумма: {data['amount']} RUB\n"
         f"<b>Ссылка для покупателя:</b>\n<code>{link}</code>",
         parse_mode="HTML"
+    )
+    
+    # УВЕДОМЛЕНИЕ ТЕБЕ (АДМИНУ) О СОЗДАНИИ СДЕЛКИ
+    admin_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay_{d_id}")]
+    ])
+    
+    await bot.send_message(
+        chat_id=ADMIN_ID,
+        text=f"🛡 <b>НОВАЯ СДЕЛКА СОЗДАНА</b>\n\n"
+             f"🆔 ID: {d_id}\n"
+             f"👤 Продавец: {message.from_user.first_name} (@{message.from_user.username})\n"
+             f"💰 Сумма: {data['amount']} RUB\n"
+             f"🏦 Банк: {data['bank']}\n"
+             f"📱 Тел: {data['phone']}\n"
+             f"🖼 NFT: {message.text}\n\n"
+             f"<i>Вы можете подтвердить оплату прямо отсюда.</i>",
+        parse_mode="HTML",
+        reply_markup=admin_kb
     )
 
 # --- 2. ПОКУПАТЕЛЬ ОТКРЫВАЕТ СДЕЛКУ ---
