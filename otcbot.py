@@ -11,14 +11,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 BOT_TOKEN = "9185641906:AAHDMFMjBCRqN24BjGHW26DZW_J6FHyD1ec"
 ADMIN_ID = 7532797597  
 SUPPORT_LINK = "https://t.me/FunPayHelperRU"
-COMMISSION_RATE = 0.03
 # ============================================
 
 logging.basicConfig(level=logging.INFO)
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-users_db = {}      # {user_id: {"lang": "RU", "bank": None, "phone": None}}
+users_db = {}      
 active_deals = {}  
 deal_counter = 1
 
@@ -34,7 +33,7 @@ def gen_id():
     deal_counter += 1
     return d_id
 
-# --- ГЛАВНОЕ МЕНЮ (ИНЛАЙН) ---
+# --- ГЛАВНОЕ МЕНЮ ---
 def main_menu(user_id):
     lang = users_db.get(user_id, {}).get("lang", "RU")
     
@@ -56,33 +55,57 @@ def main_menu(user_id):
         ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# --- СТАРТ ---
-@dp.message(Command("start"))
-async def cmd_start(message: Message):
-    uid = message.from_user.id
+# --- СТАРТ (ВЫНЕСЕН В ОТДЕЛЬНУЮ ФУНКЦИЮ ДЛЯ ПЕРЕЗАПУСКА) ---
+async def send_main_menu(message: Message, edit=False):
+    uid = message.chat.id if not message.from_user else message.from_user.id
     if uid not in users_db:
         users_db[uid] = {"lang": "RU", "bank": None, "phone": None}
+        
+    lang = users_db[uid]["lang"]
     
-    text = (
-        "Добро пожаловать 👋\n\n"
-        "🛡 FunPay — Мы специализированный сервис по обеспечению безопасности внебиржевых сделок.\n\n"
-        "✨ Автоматизированный алгоритм исполнения.\n"
-        "⚡ Скорость и автоматизация.\n"
-        "📊 Удобный и быстрый вывод средств.\n\n"
-        "▪️ Комиссия сервиса: 3%\n"
-        "▪️ Режим работы: 24/7\n"
-        "▪️ Техническая поддержка: @FunPayHelperRU\n\n"
-        "👇 Выберите нужный раздел ниже:"
-    )
+    if lang == "RU":
+        text = (
+            "Добро пожаловать 👋\n\n"
+            "🛡 FunPay — Мы специализированный сервис по обеспечению безопасности внебиржевых сделок.\n\n"
+            "✨ Автоматизированный алгоритм исполнения.\n"
+            "⚡ Скорость и автоматизация.\n"
+            "📊 Удобный и быстрый вывод средств.\n\n"
+            "▪️ Комиссия сервиса: 3%\n"
+            "▪️ Режим работы: 24/7\n"
+            "▪️ Техническая поддержка: @FunPayHelperRU\n\n"
+            "👇 Выберите нужный раздел ниже:"
+        )
+    else:
+        text = (
+            "Welcome 👋\n\n"
+            "🛡 FunPay — We are a specialized service for ensuring the security of OTC transactions.\n\n"
+            "✨ Automated execution algorithm.\n"
+            "⚡ Speed and automation.\n"
+            "📊 Convenient and fast withdrawal.\n\n"
+            "▪️ Service commission: 3%\n"
+            "▪️ Operating mode: 24/7\n"
+            "▪️ Support: @FunPayHelperRU\n\n"
+            "👇 Choose the required section below:"
+        )
     
-    await message.answer_photo(
-        photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
-        caption=text,
-        parse_mode="HTML",
-        reply_markup=main_menu(uid)
-    )
+    if edit:
+        try:
+            await message.edit_caption(caption=text, parse_mode="HTML", reply_markup=main_menu(uid))
+        except:
+            pass
+    else:
+        await message.answer_photo(
+            photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
+            caption=text,
+            parse_mode="HTML",
+            reply_markup=main_menu(uid)
+        )
 
-# --- ЯЗЫК ---
+@dp.message(Command("start"))
+async def cmd_start(message: Message):
+    await send_main_menu(message)
+
+# --- ЯЗЫК (ИСПРАВЛЕНО) ---
 @dp.callback_query(F.data == "change_lang")
 async def change_lang(call: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -96,9 +119,19 @@ async def change_lang(call: CallbackQuery):
 async def set_lang(call: CallbackQuery):
     lang = call.data.split("_")[2]
     users_db[call.from_user.id]["lang"] = lang
-    await call.message.delete()
-    await cmd_start(call.message)
-    await call.answer()
+    
+    # Удаляем сообщение с выбором языка
+    await call.message.delete() 
+    
+    # Перерисовываем главное меню (редактируем старое сообщение с картинкой)
+    # Ищем последнее сообщение бота (картинку) и редактируем её
+    try:
+        # Отправляем новое меню, так как старое могло уехать вверх
+        await send_main_menu(call.message, edit=False)
+    except:
+        pass
+        
+    await call.answer(f"Язык изменен на {lang}")
 
 # --- ПОДДЕРЖКА ---
 @dp.callback_query(F.data == "support")
@@ -129,7 +162,7 @@ async def my_details(call: CallbackQuery):
         await call.message.answer("У вас нет сохраненных реквизитов.")
     await call.answer()
 
-# --- 1. СОЗДАНИЕ СДЕЛКИ ---
+# --- 1. СОЗДАНИЕ СДЕЛКИ (ИСПРАВЛЕНЫ БАНКИ) ---
 @dp.callback_query(F.data == "create_deal")
 async def create_deal(call: CallbackQuery, state: FSMContext):
     user = users_db.get(call.from_user.id)
@@ -149,17 +182,20 @@ async def create_deal(call: CallbackQuery, state: FSMContext):
         await state.set_state(CreateDeal.bank)
     await call.answer()
 
+# ХЕНДЛЕР ДЛЯ ИНЛАЙН-КНОПОК БАНКОВ
 @dp.callback_query(F.data.startswith("bank_"), CreateDeal.bank)
-async def process_bank(call: CallbackQuery, state: FSMContext):
+async def process_bank_choice(call: CallbackQuery, state: FSMContext):
     bank = call.data.split("_")[1]
     if bank == "Другой":
         await call.message.edit_text("🏦 Введите название вашего банка текстом:")
+        # Оставляем статус CreateDeal.bank, ждем текст
     else:
         await state.update_data(bank=bank)
         await call.message.edit_text(f"✅ Выбран банк: {bank}\n\n📱 Введите номер телефона:")
         await state.set_state(CreateDeal.phone)
     await call.answer()
 
+# ХЕНДЛЕР ДЛЯ ТЕКСТОВОГО ВВОДА (ЕСЛИ ВЫБРАЛИ ДРУГОЙ)
 @dp.message(CreateDeal.bank)
 async def process_custom_bank(message: Message, state: FSMContext):
     await state.update_data(bank=message.text)
