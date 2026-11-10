@@ -99,7 +99,7 @@ async def send_main_menu(message: Message):
 async def cmd_start(message: Message):
     await send_main_menu(message)
 
-# --- ЯЗЫК (ИСПРАВЛЕНО) ---
+# --- ЯЗЫК ---
 @dp.callback_query(F.data == "change_lang")
 async def change_lang(call: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -114,9 +114,8 @@ async def set_lang(call: CallbackQuery):
     lang = call.data.split("_")[2]
     users_db[call.from_user.id]["lang"] = lang
     
-    await call.message.delete() # Удаляем старое сообщение
-    await send_main_menu(call.message) # Отправляем новое с картинкой и новым языком
-    
+    await call.message.delete()
+    await send_main_menu(call.message)
     await call.answer(f"Язык изменен на {lang}")
 
 # --- ПОДДЕРЖКА ---
@@ -148,24 +147,20 @@ async def my_details(call: CallbackQuery):
         await call.message.answer("У вас нет сохраненных реквизитов.")
     await call.answer()
 
-# --- 1. СОЗДАНИЕ СДЕЛКИ ---
+# --- 1. СОЗДАНИЕ СДЕЛКИ (ВСЕГДА С БАНКА) ---
 @dp.callback_query(F.data == "create_deal")
 async def create_deal(call: CallbackQuery, state: FSMContext):
-    user = users_db.get(call.from_user.id)
-    if user["bank"]:
-        await call.message.answer("💰 <b>Введите сумму сделки (в RUB):</b>", parse_mode="HTML")
-        await state.update_data(bank=user["bank"], phone=user["phone"])
-        await state.set_state(CreateDeal.amount)
-    else:
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🟢 Сбербанк", callback_data="bank_Сбербанк"),
-             InlineKeyboardButton(text="🟡 Т-Банк", callback_data="bank_Т-Банк")],
-            [InlineKeyboardButton(text="🔵 Альфа-Банк", callback_data="bank_Альфа-Банк"),
-             InlineKeyboardButton(text="🟣 ВТБ", callback_data="bank_ВТБ")],
-            [InlineKeyboardButton(text="⚫ Другой банк", callback_data="bank_Другой")]
-        ])
-        await call.message.answer("🏦 <b>Выберите ваш банк:</b>", parse_mode="HTML", reply_markup=kb)
-        await state.set_state(CreateDeal.bank)
+    await state.clear() # Очищаем старые данные
+    
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🟢 Сбербанк", callback_data="bank_Сбербанк"),
+         InlineKeyboardButton(text="🟡 Т-Банк", callback_data="bank_Т-Банк")],
+        [InlineKeyboardButton(text="🔵 Альфа-Банк", callback_data="bank_Альфа-Банк"),
+         InlineKeyboardButton(text="🟣 ВТБ", callback_data="bank_ВТБ")],
+        [InlineKeyboardButton(text="⚫ Другой банк", callback_data="bank_Другой")]
+    ])
+    await call.message.answer("🏦 <b>Выберите ваш банк:</b>", parse_mode="HTML", reply_markup=kb)
+    await state.set_state(CreateDeal.bank)
     await call.answer()
 
 @dp.callback_query(F.data.startswith("bank_"), CreateDeal.bank)
@@ -189,8 +184,11 @@ async def process_custom_bank(message: Message, state: FSMContext):
 async def process_phone(message: Message, state: FSMContext):
     await state.update_data(phone=message.text)
     data = await state.get_data()
-    users_db[message.from_user.id]["bank"] = data["bank"]
-    users_db[message.from_user.id]["phone"] = data["phone"]
+    
+    # Сохраняем в профиль (чтобы показывались в "Реквизиты")
+    users_db[message.from_user.id]["bank"] = data.get("bank")
+    users_db[message.from_user.id]["phone"] = data.get("phone")
+    
     await message.answer("💰 <b>Введите сумму сделки (в RUB):</b>", parse_mode="HTML")
     await state.set_state(CreateDeal.amount)
 
