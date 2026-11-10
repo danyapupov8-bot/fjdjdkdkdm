@@ -55,8 +55,8 @@ def main_menu(user_id):
         ]
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
-# --- СТАРТ (ВЫНЕСЕН В ОТДЕЛЬНУЮ ФУНКЦИЮ ДЛЯ ПЕРЕЗАПУСКА) ---
-async def send_main_menu(message: Message, edit=False):
+# --- ФУНКЦИЯ ОТПРАВКИ МЕНЮ ---
+async def send_main_menu(message: Message):
     uid = message.chat.id if not message.from_user else message.from_user.id
     if uid not in users_db:
         users_db[uid] = {"lang": "RU", "bank": None, "phone": None}
@@ -88,18 +88,12 @@ async def send_main_menu(message: Message, edit=False):
             "👇 Choose the required section below:"
         )
     
-    if edit:
-        try:
-            await message.edit_caption(caption=text, parse_mode="HTML", reply_markup=main_menu(uid))
-        except:
-            pass
-    else:
-        await message.answer_photo(
-            photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
-            caption=text,
-            parse_mode="HTML",
-            reply_markup=main_menu(uid)
-        )
+    await message.answer_photo(
+        photo="AgACAgIAAxkBAAEDIx1q825ucePNRzdgkIAGbyBxZMNAdAACxyFrG23gmUtey3umHg-B8gEAAwIAA3MAAz0E",
+        caption=text,
+        parse_mode="HTML",
+        reply_markup=main_menu(uid)
+    )
 
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
@@ -112,7 +106,7 @@ async def change_lang(call: CallbackQuery):
         [InlineKeyboardButton(text="🇷🇺 Русский", callback_data="set_lang_RU"),
          InlineKeyboardButton(text="🇬🇧 English", callback_data="set_lang_EN")]
     ])
-    await call.message.answer("Выберите язык / Choose language:", reply_markup=kb)
+    await call.message.edit_reply_markup(reply_markup=kb)
     await call.answer()
 
 @dp.callback_query(F.data.startswith("set_lang_"))
@@ -120,17 +114,9 @@ async def set_lang(call: CallbackQuery):
     lang = call.data.split("_")[2]
     users_db[call.from_user.id]["lang"] = lang
     
-    # Удаляем сообщение с выбором языка
-    await call.message.delete() 
+    await call.message.delete() # Удаляем старое сообщение
+    await send_main_menu(call.message) # Отправляем новое с картинкой и новым языком
     
-    # Перерисовываем главное меню (редактируем старое сообщение с картинкой)
-    # Ищем последнее сообщение бота (картинку) и редактируем её
-    try:
-        # Отправляем новое меню, так как старое могло уехать вверх
-        await send_main_menu(call.message, edit=False)
-    except:
-        pass
-        
     await call.answer(f"Язык изменен на {lang}")
 
 # --- ПОДДЕРЖКА ---
@@ -162,7 +148,7 @@ async def my_details(call: CallbackQuery):
         await call.message.answer("У вас нет сохраненных реквизитов.")
     await call.answer()
 
-# --- 1. СОЗДАНИЕ СДЕЛКИ (ИСПРАВЛЕНЫ БАНКИ) ---
+# --- 1. СОЗДАНИЕ СДЕЛКИ ---
 @dp.callback_query(F.data == "create_deal")
 async def create_deal(call: CallbackQuery, state: FSMContext):
     user = users_db.get(call.from_user.id)
@@ -182,20 +168,17 @@ async def create_deal(call: CallbackQuery, state: FSMContext):
         await state.set_state(CreateDeal.bank)
     await call.answer()
 
-# ХЕНДЛЕР ДЛЯ ИНЛАЙН-КНОПОК БАНКОВ
 @dp.callback_query(F.data.startswith("bank_"), CreateDeal.bank)
 async def process_bank_choice(call: CallbackQuery, state: FSMContext):
     bank = call.data.split("_")[1]
     if bank == "Другой":
         await call.message.edit_text("🏦 Введите название вашего банка текстом:")
-        # Оставляем статус CreateDeal.bank, ждем текст
     else:
         await state.update_data(bank=bank)
         await call.message.edit_text(f"✅ Выбран банк: {bank}\n\n📱 Введите номер телефона:")
         await state.set_state(CreateDeal.phone)
     await call.answer()
 
-# ХЕНДЛЕР ДЛЯ ТЕКСТОВОГО ВВОДА (ЕСЛИ ВЫБРАЛИ ДРУГОЙ)
 @dp.message(CreateDeal.bank)
 async def process_custom_bank(message: Message, state: FSMContext):
     await state.update_data(bank=message.text)
