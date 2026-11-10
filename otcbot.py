@@ -24,38 +24,30 @@ class CreateDeal(StatesGroup):
     amount = State()
     nft_link = State()
 
-# --- МЕНЮ ---
-def user_menu():
+# --- МЕНЮ (ТОЛЬКО ОДНА КНОПКА) ---
+def main_menu():
     kb = [
-        [KeyboardButton(text="🤝 Создать сделку")],
-        [KeyboardButton(text="📦 Мои сделки"), KeyboardButton(text="🆘 Поддержка")]
+        [KeyboardButton(text="🤝 Создать сделку")]
     ]
     return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
 
-def admin_menu():
-    kb = [
-        [KeyboardButton(text="🤝 Создать сделку")],
-        [KeyboardButton(text="📦 Мои сделки"), KeyboardButton(text="🆘 Поддержка")],
-        [KeyboardButton(text="🛡 Админ-панель")] 
-    ]
-    return ReplyKeyboardMarkup(keyboard=kb, resize_keyboard=True)
-
-# --- СТАРТ ---
+# --- СТАРТ (ТЕКСТ КАК НА СКРИНЕ) ---
 @dp.message(Command("start"))
 async def cmd_start(message: Message):
-    if message.from_user.id == ADMIN_ID:
-        await message.answer("Добро пожаловать, Администратор 🛡\nВыберите действие:", reply_markup=admin_menu())
-    else:
-        await message.answer("Добро пожаловать 👋\nЭто официальный сервис безопасных сделок.\nВыберите действие:", reply_markup=user_menu())
-
-# --- ЗАГЛУШКИ ДЛЯ КНОПОК МЕНЮ ---
-@dp.message(F.text == "📦 Мои сделки")
-async def my_deals(message: Message):
-    await message.answer("📦 Раздел «Мои сделки»\n\nЗдесь будут отображаться ваши активные и завершенные сделки (в разработке).")
-
-@dp.message(F.text == "🆘 Поддержка")
-async def support(message: Message):
-    await message.answer("🆘 <b>Техническая поддержка</b>\n\nЕсли у вас возникли вопросы, напишите нашему менеджеру: @Твой_Юзернейм", parse_mode="HTML")
+    welcome_text = (
+        "Добро пожаловать 👋\n\n"
+        "🛡 FunPay — Мы специализированный сервис по обеспечению безопасности внебиржевых сделок.\n\n"
+        "✨ Автоматизированный алгоритм исполнения.\n"
+        "⚡ Скорость и автоматизация.\n"
+        "📊 Удобный и быстрый вывод средств.\n\n"
+        "▪️ Комиссия сервиса: 3%\n"
+        "▪️ Режим работы: 24/7\n"
+        "▪️ Техническая поддержка: @FunPayTgHelper\n\n"
+        "👇 Выберите нужный раздел ниже:"
+    )
+    
+    # Отправляем текст с кнопкой "Создать сделку"
+    await message.answer(welcome_text, parse_mode="HTML", reply_markup=main_menu())
 
 # --- 1. СОЗДАНИЕ СДЕЛКИ ---
 @dp.message(F.text == "🤝 Создать сделку")
@@ -73,7 +65,7 @@ async def create_deal_start(message: Message, state: FSMContext):
     
     await message.answer(
         "🏦 <b>Шаг 1 из 4</b>\n\n"
-        "Пожалуйста, выберите ваш банк из списка ниже:",
+        "Введите название вашего банка:",
         parse_mode="HTML",
         reply_markup=kb
     )
@@ -243,7 +235,6 @@ async def admin_confirm(call: CallbackQuery):
     deal["status"] = "paid"
     await call.message.edit_text(f"✅ Вы подтвердили оплату по сделке с @{deal['seller_name']}.")
     
-    # Текст БЕЗ "системы безопасных сделок" и без инструкций
     seller_text = (
         f"✅ <b>Оплата по сделке успешно подтверждена!</b>\n\n"
         f"📄 <b>Детали:</b>\n"
